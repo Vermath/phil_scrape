@@ -108,6 +108,29 @@ def configure_selenium():
     
     return chrome_options
 
+# Function to parse extracted content from JSON to markdown
+def parse_extracted_content(extracted_content):
+    try:
+        blocks = json.loads(extracted_content)
+        markdown_content = ""
+        for block in blocks:
+            tags = block.get('tags', [])
+            content = block.get('content', [])
+            if not block.get('error', False):
+                if 'introduction' in tags:
+                    markdown_content += f"## Introduction\n\n" + "\n\n".join(content) + "\n\n"
+                elif 'ingredients' in tags:
+                    markdown_content += f"## Ingredients\n\n" + "\n".join([f"* {item}" for item in content]) + "\n\n"
+                elif 'instructions' in tags:
+                    markdown_content += f"## Instructions\n\n" + "\n".join([f"{item}" for item in content]) + "\n\n"
+                elif 'review' in tags or 'comment' in tags or 'user_feedback' in tags:
+                    markdown_content += f"**User Feedback:**\n\n" + "\n\n".join(content) + "\n\n"
+                else:
+                    markdown_content += "\n".join(content) + "\n\n"
+        return markdown_content
+    except json.JSONDecodeError:
+        return extracted_content
+
 # Streamlit App
 def main():
     st.title("🔗 URL Processor and Content Extractor with LLM")
@@ -245,7 +268,8 @@ def main():
                         st.warning(f"⚠️ Extracted content is empty for URL: {url}")
                         extracted_content = "n/a"
                     else:
-                        extracted_content = clean_text(extracted_content)
+                        # Parse the extracted JSON into markdown
+                        extracted_content = parse_extracted_content(extracted_content)
                 else:
                     st.warning(f"⚠️ Failed to extract content from the URL: {url}")
                     extracted_content = "n/a"
@@ -268,7 +292,7 @@ def main():
         # Create DataFrame
         df_output = pd.DataFrame(data)
 
-        # Display the updated DataFrame with markdown formatting
+        # Display the extracted content in markdown format
         st.subheader("📊 Extracted Data")
         for index, row in df_output.iterrows():
             st.markdown(f"**URL:** [{row['URL']}]({row['URL']})")
