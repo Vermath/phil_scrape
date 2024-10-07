@@ -117,14 +117,23 @@ def parse_extracted_content(extracted_content):
             tags = block.get('tags', [])
             content = block.get('content', [])
             if not block.get('error', False):
+                # Exclude unwanted tags
+                if any(tag in tags for tag in ['navigation', 'comments', 'footer', 'header', 'user_feedback', 'review', 'reader_interactions']):
+                    continue
                 if 'introduction' in tags:
                     markdown_content += f"## Introduction\n\n" + "\n\n".join(content) + "\n\n"
                 elif 'ingredients' in tags:
                     markdown_content += f"## Ingredients\n\n" + "\n".join([f"* {item}" for item in content]) + "\n\n"
                 elif 'instructions' in tags:
                     markdown_content += f"## Instructions\n\n" + "\n".join([f"{item}" for item in content]) + "\n\n"
-                elif 'review' in tags or 'comment' in tags or 'user_feedback' in tags:
-                    markdown_content += f"**User Feedback:**\n\n" + "\n\n".join(content) + "\n\n"
+                elif 'description' in tags:
+                    markdown_content += f"## Description\n\n" + "\n\n".join(content) + "\n\n"
+                elif 'nutrition_information' in tags:
+                    markdown_content += f"## Nutrition Information\n\n" + "\n".join(content) + "\n\n"
+                elif 'serving_suggestion' in tags:
+                    markdown_content += f"## Serving Suggestion\n\n" + "\n\n".join(content) + "\n\n"
+                elif 'personal_note' in tags:
+                    markdown_content += f"## Personal Note\n\n" + "\n\n".join(content) + "\n\n"
                 else:
                     markdown_content += "\n".join(content) + "\n\n"
         return markdown_content
@@ -237,9 +246,9 @@ def main():
             provider="openai/gpt-4o-mini",  # Ensure this model is available and supported
             api_token=st.secrets["openai_api_key"],  # Use the OpenAI API key from secrets
             instruction=(
-                "Please extract only the main article content from the following webpage. "
-                "Exclude any navigation menus, headers, footers, advertisements, or any non-essential elements. "
-                "Provide a clear and concise summary of the main content in markdown format without including any HTML or markup."
+                "Please extract only the main article content from the following webpage in markdown format. "
+                "Exclude any navigation menus, headers, footers, advertisements, comments, user feedback, or any non-essential elements. "
+                "Focus solely on the recipe content including introduction, ingredients, instructions, descriptions, nutrition information, and serving suggestions."
             )
             # Optionally, you can add a schema or other parameters as needed
         )
