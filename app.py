@@ -73,7 +73,7 @@ def clean_text(text):
 def extract_main_article(scraped_content):
     prompt = (
         "Extract the main article text from the following content, excluding comments, advertisements, and any non-essential sections. "
-        "Ensure that the extracted text is coherent and complete."
+        "Ensure that the extracted text is coherent and complete. DO NOT TRUNCATE IN ANY WAY THE CONTENT OF THE MAIN ARTICLE. INCLUDE EVERYTHING WRITTEN BY THE AUTHOR IN THE ARTICLE WITH NO OMISSIONS. DO NOT SHORTEN IT IN ANY WAY."
     )
     full_prompt = f"{prompt}\n\nContent:\n{scraped_content}"
     try:
