@@ -113,29 +113,45 @@ def parse_extracted_content(extracted_content):
     try:
         blocks = json.loads(extracted_content)
         markdown_content = ""
+        included_sections = set()  # To track included sections and prevent duplication
+
         for block in blocks:
             tags = block.get('tags', [])
             content = block.get('content', [])
             if not block.get('error', False):
                 # Exclude unwanted tags
-                if any(tag in tags for tag in ['navigation', 'comments', 'footer', 'header', 'user_feedback', 'review', 'reader_interactions']):
+                if any(tag in tags for tag in ['navigation', 'comments', 'footer', 'header', 'user_feedback', 'review', 'reader_interactions', 'sidebar', 'ads']):
                     continue
-                if 'introduction' in tags:
-                    markdown_content += f"## Introduction\n\n" + "\n\n".join(content) + "\n\n"
-                elif 'ingredients' in tags:
-                    markdown_content += f"## Ingredients\n\n" + "\n".join([f"* {item}" for item in content]) + "\n\n"
-                elif 'instructions' in tags:
-                    markdown_content += f"## Instructions\n\n" + "\n".join([f"{item}" for item in content]) + "\n\n"
-                elif 'description' in tags:
-                    markdown_content += f"## Description\n\n" + "\n\n".join(content) + "\n\n"
-                elif 'nutrition_information' in tags:
-                    markdown_content += f"## Nutrition Information\n\n" + "\n".join(content) + "\n\n"
-                elif 'serving_suggestion' in tags:
-                    markdown_content += f"## Serving Suggestion\n\n" + "\n\n".join(content) + "\n\n"
-                elif 'personal_note' in tags:
-                    markdown_content += f"## Personal Note\n\n" + "\n\n".join(content) + "\n\n"
+
+                # Determine the section
+                section = None
+                if 'introduction' in tags and 'introduction' not in included_sections:
+                    section = "## Introduction\n\n"
+                    included_sections.add('introduction')
+                elif 'ingredients' in tags and 'ingredients' not in included_sections:
+                    section = "## Ingredients\n\n" + "\n".join([f"* {item}" for item in content]) + "\n\n"
+                    included_sections.add('ingredients')
+                elif 'instructions' in tags and 'instructions' not in included_sections:
+                    section = "## Instructions\n\n" + "\n".join([f"{idx + 1}. {item}" for idx, item in enumerate(content)]) + "\n\n"
+                    included_sections.add('instructions')
+                elif 'description' in tags and 'description' not in included_sections:
+                    section = "## Description\n\n" + "\n\n".join(content) + "\n\n"
+                    included_sections.add('description')
+                elif 'nutrition_information' in tags and 'nutrition_information' not in included_sections:
+                    section = "## Nutrition Information\n\n" + "\n".join(content) + "\n\n"
+                    included_sections.add('nutrition_information')
+                elif 'serving_suggestion' in tags and 'serving_suggestion' not in included_sections:
+                    section = "## Serving Suggestion\n\n" + "\n\n".join(content) + "\n\n"
+                    included_sections.add('serving_suggestion')
+                elif 'personal_note' in tags and 'personal_note' not in included_sections:
+                    section = "## Personal Note\n\n" + "\n\n".join(content) + "\n\n"
+                    included_sections.add('personal_note')
                 else:
-                    markdown_content += "\n".join(content) + "\n\n"
+                    continue  # Skip any other sections or duplicates
+
+                if section:
+                    markdown_content += section
+
         return markdown_content
     except json.JSONDecodeError:
         return extracted_content
@@ -246,9 +262,10 @@ def main():
             provider="openai/gpt-4o-mini",  # Ensure this model is available and supported
             api_token=st.secrets["openai_api_key"],  # Use the OpenAI API key from secrets
             instruction=(
-                "Please extract only the main article content from the following webpage in markdown format. "
+                "Please extract only the main recipe content from the following webpage in well-structured markdown format. "
                 "Exclude any navigation menus, headers, footers, advertisements, comments, user feedback, or any non-essential elements. "
-                "Focus solely on the recipe content including introduction, ingredients, instructions, descriptions, nutrition information, and serving suggestions."
+                "Focus solely on the recipe sections including Introduction, Ingredients, Instructions, Description, Nutrition Information, and Serving Suggestions. "
+                "Ensure that each section appears only once and is properly formatted without duplication."
             )
             # Optionally, you can add a schema or other parameters as needed
         )
