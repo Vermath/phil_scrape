@@ -5,22 +5,25 @@ import unicodedata
 import streamlit as st
 from crawl4ai import WebCrawler
 from crawl4ai.crawler_strategy import LocalSeleniumCrawlerStrategy
-from crawl4ai.extraction_strategy import LLMExtractionStrategy
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from openai import OpenAI
 from io import BytesIO
 from urllib.parse import urlparse
 import logging
 import subprocess
 import shutil
 import json
-import random
-import time
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Initialize OpenAI Client
+openai_client = OpenAI(
+    api_key=st.secrets["openai_api_key"],  # Ensure this is correctly set in secrets.toml
+)
 
 # Function to verify Chromium installation
 def verify_chromium():
@@ -66,6 +69,33 @@ def clean_text(text):
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
+# Function to extract main article text using OpenAI
+def extract_main_article(scraped_content):
+    prompt = (
+        "Extract the main article text from the following content, excluding comments, advertisements, and any non-essential sections. "
+        "Ensure that the extracted text is coherent and complete."
+    )
+    full_prompt = f"{prompt}\n\nContent:\n{scraped_content}"
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",  # Ensure the model supports the required token limit
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": full_prompt}
+            ],
+            max_tokens=16000,  # Set to 16000 tokens to accommodate entire article
+            n=1,
+            stop=None,
+            temperature=0.3,
+        )
+        extracted_data = response.choices[0].message.content.strip()
+        cleaned_data = clean_text(extracted_data)
+        return cleaned_data if cleaned_data else "n/a"
+    except Exception as e:
+        st.warning(f"⚠️ Error during OpenAI API call for extracting main article: {e}")
+        logger.error(f"OpenAI API Error for extracting main article: {e}")
+        return "n/a"
+
 # Function to parse pasted URLs
 def parse_pasted_urls(urls_text):
     urls = re.split(r'[,\n\s]+', urls_text)
@@ -79,86 +109,9 @@ def is_valid_url(url):
     except:
         return False
 
-# Function to configure Selenium with enhanced options
-def configure_selenium():
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")  # Use headless mode
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
-    
-    # Spoof a common user-agent to mimic a real browser
-    user_agent = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/114.0.0.0 Safari/537.36"
-    )
-    chrome_options.add_argument(f"user-agent={user_agent}")
-    
-    # Disable images and CSS to speed up scraping and reduce detection
-    prefs = {
-        "profile.managed_default_content_settings.images": 2,
-        "profile.managed_default_content_settings.stylesheets": 2,
-        "profile.managed_default_content_settings.javascript": 1,  # Enable JS
-    }
-    chrome_options.add_experimental_option("prefs", prefs)
-    
-    chrome_options.binary_location = shutil.which("chromium")  # Automatically find the chromium binary
-    
-    return chrome_options
-
-# Function to parse extracted content from JSON to markdown
-def parse_extracted_content(extracted_content):
-    try:
-        blocks = json.loads(extracted_content)
-        markdown_content = ""
-        included_sections = set()  # To track included sections and prevent duplication
-
-        for block in blocks:
-            tags = block.get('tags', [])
-            content = block.get('content', [])
-            if not block.get('error', False):
-                # Exclude unwanted tags
-                if any(tag in tags for tag in ['navigation', 'comments', 'footer', 'header', 'user_feedback', 'review', 'reader_interactions', 'sidebar', 'ads']):
-                    continue
-
-                # Determine the section
-                section = None
-                if 'introduction' in tags and 'introduction' not in included_sections:
-                    section = "## Introduction\n\n"
-                    included_sections.add('introduction')
-                elif 'ingredients' in tags and 'ingredients' not in included_sections:
-                    section = "## Ingredients\n\n" + "\n".join([f"* {item}" for item in content]) + "\n\n"
-                    included_sections.add('ingredients')
-                elif 'instructions' in tags and 'instructions' not in included_sections:
-                    section = "## Instructions\n\n" + "\n".join([f"{idx + 1}. {item}" for idx, item in enumerate(content)]) + "\n\n"
-                    included_sections.add('instructions')
-                elif 'description' in tags and 'description' not in included_sections:
-                    section = "## Description\n\n" + "\n\n".join(content) + "\n\n"
-                    included_sections.add('description')
-                elif 'nutrition_information' in tags and 'nutrition_information' not in included_sections:
-                    section = "## Nutrition Information\n\n" + "\n".join(content) + "\n\n"
-                    included_sections.add('nutrition_information')
-                elif 'serving_suggestion' in tags and 'serving_suggestion' not in included_sections:
-                    section = "## Serving Suggestion\n\n" + "\n\n".join(content) + "\n\n"
-                    included_sections.add('serving_suggestion')
-                elif 'personal_note' in tags and 'personal_note' not in included_sections:
-                    section = "## Personal Note\n\n" + "\n\n".join(content) + "\n\n"
-                    included_sections.add('personal_note')
-                else:
-                    continue  # Skip any other sections or duplicates
-
-                if section:
-                    markdown_content += section
-
-        return markdown_content
-    except json.JSONDecodeError:
-        return extracted_content
-
 # Streamlit App
 def main():
-    st.title("🔗 URL Processor and Content Extractor with LLM")
+    st.title("🔗 URL Processor and Content Scraper with OpenAI Extraction")
 
     # Verify Chromium and Chromedriver installation
     chromium_ok = verify_chromium()
@@ -167,8 +120,14 @@ def main():
         st.error("🔴 Chromium or Chromedriver is not installed correctly. Please check your setup.")
         st.stop()
 
-    # Configure Selenium
-    chrome_options = configure_selenium()
+    # Configure Selenium to run Chromium in headless mode
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.binary_location = shutil.which("chromium")  # Automatically find the chromium binary
 
     # Locate system-installed Chromedriver
     chromedriver_path = shutil.which("chromedriver")
@@ -176,7 +135,7 @@ def main():
         st.error("🔴 Chromedriver not found in system PATH.")
         st.stop()
 
-    # Initialize WebDriver with enhanced options
+    # Initialize WebDriver
     try:
         service = Service(chromedriver_path)
         driver = webdriver.Chrome(service=service, options=chrome_options)
@@ -257,47 +216,28 @@ def main():
             'Extracted Content': []
         }
 
-        # Define the LLM Extraction Strategy
-        llm_extraction_strategy = LLMExtractionStrategy(
-            provider="openai/gpt-4o-mini",  # Ensure this model is available and supported
-            api_token=st.secrets["openai_api_key"],  # Use the OpenAI API key from secrets
-            instruction=(
-                "Please extract only the main recipe content from the following webpage in well-structured markdown format. "
-                "Exclude any navigation menus, headers, footers, advertisements, comments, user feedback, or any non-essential elements. "
-                "Focus solely on the recipe sections including Introduction, Ingredients, Instructions, Description, Nutrition Information, and Serving Suggestions. "
-                "Ensure that each section appears only once and is properly formatted without duplication."
-            )
-            # Optionally, you can add a schema or other parameters as needed
-        )
-
         # Initialize progress bar
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        # Process each URL with enhanced scraping strategies
+        # Process each URL
         for idx, url in enumerate(urls):
             status_text.text(f"🔄 Processing URL {idx + 1} of {len(urls)}")
             try:
-                # Introduce random delay to mimic human behavior
-                time.sleep(random.uniform(1, 3))
-
-                # Scrape the webpage with LLM Extraction Strategy
-                scrape_result = crawler.run(
-                    url=url,
-                    extraction_strategy=llm_extraction_strategy,
-                    bypass_cache=True
-                )
+                # Scrape the webpage
+                scrape_result = crawler.run(url=url, bypass_cache=True)
 
                 if scrape_result.success:
-                    extracted_content = scrape_result.extracted_content
-                    if not extracted_content:
-                        st.warning(f"⚠️ Extracted content is empty for URL: {url}")
-                        extracted_content = "n/a"
+                    content = scrape_result.extracted_content
+                    if not content:
+                        st.warning(f"⚠️ Scraped content is empty for URL: {url}")
+                        scraped_content = "n/a"
                     else:
-                        # Parse the extracted JSON into markdown
-                        extracted_content = parse_extracted_content(extracted_content)
+                        scraped_content = clean_text(content)
+                        # Extract main article text using OpenAI
+                        extracted_content = extract_main_article(scraped_content)
                 else:
-                    st.warning(f"⚠️ Failed to extract content from the URL: {url}")
+                    st.warning(f"⚠️ Failed to scrape the URL: {url}")
                     extracted_content = "n/a"
                     st.session_state.failed_urls.append(url)
 
@@ -318,22 +258,31 @@ def main():
         # Create DataFrame
         df_output = pd.DataFrame(data)
 
-        # Display the extracted content in markdown format
-        st.subheader("📊 Extracted Data")
+        # Display the updated DataFrame
+        st.subheader("📊 Processed Data")
+        st.dataframe(df_output)
+
+        # Display Extracted Content in Markdown
+        st.subheader("📝 Extracted Content")
         for index, row in df_output.iterrows():
-            st.markdown(f"**URL:** [{row['URL']}]({row['URL']})")
-            st.markdown(row['Extracted Content'])
-            st.markdown("---")
+            url = row['URL']
+            content = row['Extracted Content']
+            with st.expander(f"📄 {url}"):
+                if content != "n/a":
+                    st.markdown(content)
+                else:
+                    st.write("Content not available.")
 
         # Prepare JSONL for download
-        jsonl_lines = df_output.to_json(orient='records', lines=True)
+        jsonl_records = df_output.to_dict(orient='records')
+        jsonl_lines = "\n".join([json.dumps(record) for record in jsonl_records])
         jsonl_bytes = jsonl_lines.encode('utf-8')
         jsonl_buffer = BytesIO(jsonl_bytes)
 
         st.download_button(
             label="📥 Download data as JSONL",
             data=jsonl_buffer,
-            file_name='extracted_data.jsonl',
+            file_name='scraped_data.jsonl',
             mime='application/json',
         )
 
@@ -345,7 +294,7 @@ def main():
         st.download_button(
             label="📥 Download data as CSV",
             data=csv_buffer,
-            file_name='extracted_data.csv',
+            file_name='scraped_data.csv',
             mime='text/csv',
         )
 
