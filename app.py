@@ -3,9 +3,9 @@ import pandas as pd
 import re
 import unicodedata
 import streamlit as st
-from crawl4ai import WebCrawler, AsyncWebCrawler
+from crawl4ai import WebCrawler
 from crawl4ai.crawler_strategy import LocalSeleniumCrawlerStrategy
-from crawl4ai.extraction_strategy import LLMExtractionStrategy, StructuredDataExtractionStrategy
+from crawl4ai.extraction_strategy import JsonCssExtractionStrategy, LLMExtractionStrategy
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -85,13 +85,43 @@ def is_valid_url(url):
 
 # Function to define extraction strategies
 def get_extraction_strategies():
-    # Structured Data Extraction Strategy (if available)
-    structured_data_strategy = StructuredDataExtractionStrategy(
-        css_selectors=["article", "main", "div.content"],  # Adjust selectors as needed
-        # You can specify more selectors or patterns based on target websites
+    # Define the JSON CSS Extraction Strategy
+    json_css_strategy = JsonCssExtractionStrategy(
+        schema={
+            "name": "Recipe Content Extraction",
+            "baseSelector": "article.post",  # Adjust based on the website's structure
+            "fields": [
+                {
+                    "name": "title",
+                    "selector": "h1.entry-title",
+                    "type": "text",
+                },
+                {
+                    "name": "ingredients",
+                    "selector": "div.ingredients",
+                    "type": "text",
+                },
+                {
+                    "name": "instructions",
+                    "selector": "div.instructions",
+                    "type": "text",
+                },
+                {
+                    "name": "prep_time",
+                    "selector": "span.prep-time",
+                    "type": "text",
+                },
+                {
+                    "name": "cook_time",
+                    "selector": "span.cook-time",
+                    "type": "text",
+                },
+            ],
+        },
+        verbose=True
     )
     
-    # LLM Extraction Strategy
+    # Define the LLM Extraction Strategy as a fallback
     llm_extraction_strategy = LLMExtractionStrategy(
         provider="openai/gpt-4o-mini",  # Ensure this model is available and supported
         api_token=st.secrets["openai_api_key"],  # Use the OpenAI API key from secrets
@@ -100,22 +130,21 @@ def get_extraction_strategies():
             "Ignore navigation menus, footers, advertisements, and other non-essential elements. "
             "Provide a concise summary if necessary."
         ),
-        # Optionally, you can add a schema or other parameters as needed
     )
     
-    return [structured_data_strategy, llm_extraction_strategy]
+    return [json_css_strategy, llm_extraction_strategy]
 
 # Streamlit App
 def main():
     st.title("🔗 URL Processor and Content Extractor with Enhanced Strategies")
-    
+
     # Verify Chromium and Chromedriver installation
     chromium_ok = verify_chromium()
     chromedriver_ok = verify_chromedriver()
     if not (chromium_ok and chromedriver_ok):
         st.error("🔴 Chromium or Chromedriver is not installed correctly. Please check your setup.")
         st.stop()
-    
+
     # Configure Selenium to run Chromium in headless mode
     chrome_options = Options()
     chrome_options.add_argument("--headless")
@@ -124,13 +153,13 @@ def main():
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.binary_location = shutil.which("chromium")  # Automatically find the chromium binary
-    
+
     # Locate system-installed Chromedriver
     chromedriver_path = shutil.which("chromedriver")
     if not chromedriver_path:
         st.error("🔴 Chromedriver not found in system PATH.")
         st.stop()
-    
+
     # Initialize WebDriver
     try:
         service = Service(chromedriver_path)
@@ -142,26 +171,26 @@ def main():
     except Exception as e:
         st.error(f"🔴 Selenium initialization error: {e}")
         st.stop()
-    
+
     # Initialize session state for failed URLs
     if 'failed_urls' not in st.session_state:
         st.session_state.failed_urls = []
-    
+
     # File uploader for CSV
     uploaded_file = st.file_uploader("📁 Upload CSV with 'URL' column", type=["csv"])
-    
+
     # Manual entry
     st.subheader("🖊️ Or Enter URLs Manually")
     manual_url = st.text_input("Enter a single URL")
-    
+
     # Paste list of URLs
     st.subheader("📋 Or Paste a List of URLs")
     pasted_urls = st.text_area("Paste your URLs here (separated by commas, newlines, or spaces)")
-    
+
     # Button to start processing
     if st.button("🚀 Process URLs"):
         urls = []
-        
+
         # Handle uploaded CSV
         if uploaded_file is not None:
             try:
@@ -179,7 +208,7 @@ def main():
                         st.warning(f"⚠️ {len(invalid_uploaded_urls)} invalid URLs were skipped from the uploaded CSV.")
             except Exception as e:
                 st.error(f"❌ Error reading CSV file: {e}")
-        
+
         # Handle manual entry
         if manual_url:
             if is_valid_url(manual_url):
@@ -187,7 +216,7 @@ def main():
                 st.success("✅ Added manually entered URL.")
             else:
                 st.warning("⚠️ The manually entered URL is invalid and was skipped.")
-        
+
         # Handle pasted URLs
         if pasted_urls:
             parsed_urls = parse_pasted_urls(pasted_urls)
@@ -197,28 +226,28 @@ def main():
             st.success(f"✅ Added {len(valid_pasted_urls)} valid URLs from pasted list.")
             if invalid_pasted_urls:
                 st.warning(f"⚠️ {len(invalid_pasted_urls)} invalid URLs were skipped from the pasted list.")
-        
+
         if not urls:
             st.error("❌ No valid URLs provided. Please upload a CSV, enter URLs manually, or paste a list of URLs.")
             return
-        
+
         # Remove duplicates
         urls = list(dict.fromkeys(urls))
         st.write(f"📊 **Total unique valid URLs to process:** {len(urls)}")
-        
+
         # Initialize lists for DataFrame
         data = {
             'URL': [],
             'Extracted Content': []
         }
-        
+
         # Define the Extraction Strategies
         extraction_strategies = get_extraction_strategies()
-        
+
         # Initialize progress bar
         progress_bar = st.progress(0)
         status_text = st.empty()
-        
+
         # Process each URL
         for idx, url in enumerate(urls):
             status_text.text(f"🔄 Processing URL {idx + 1} of {len(urls)}")
@@ -231,64 +260,64 @@ def main():
                         extraction_strategy=strategy,
                         bypass_cache=True
                     )
-                    
+
                     if scrape_result.success and scrape_result.extracted_content:
                         extracted_content = clean_text(scrape_result.extracted_content)
                         logger.info(f"✅ Successfully extracted content using {strategy.__class__.__name__} for URL: {url}")
                         break  # Exit loop after successful extraction
                     else:
                         logger.warning(f"⚠️ Extraction with {strategy.__class__.__name__} failed for URL: {url}")
-                
+
                 if not extracted_content:
                     st.warning(f"⚠️ Failed to extract relevant content from URL: {url}")
                     extracted_content = "n/a"
                     st.session_state.failed_urls.append(url)
-                
+
                 # Append data
                 data['URL'].append(url)
                 data['Extracted Content'].append(extracted_content)
-            
+
             except Exception as e:
                 st.warning(f"⚠️ An error occurred while processing URL {url}: {e}")
                 data['URL'].append(url)
                 data['Extracted Content'].append("n/a")
                 st.session_state.failed_urls.append(url)
-            
+
             # Update progress bar
             progress = (idx + 1) / len(urls)
             progress_bar.progress(progress)
-        
+
         # Create DataFrame
         df_output = pd.DataFrame(data)
-        
+
         # Display the updated DataFrame
         st.subheader("📊 Extracted Data")
         st.dataframe(df_output)
-        
+
         # Prepare JSONL for download
         jsonl_lines = df_output.to_json(orient='records', lines=True)
         jsonl_bytes = jsonl_lines.encode('utf-8')
         jsonl_buffer = BytesIO(jsonl_bytes)
-        
+
         st.download_button(
             label="📥 Download data as JSONL",
             data=jsonl_buffer,
             file_name='extracted_data.jsonl',
             mime='application/json',
         )
-        
+
         # Also provide CSV download if needed
         csv_buffer = BytesIO()
         df_output.to_csv(csv_buffer, index=False)
         csv_buffer.seek(0)
-        
+
         st.download_button(
             label="📥 Download data as CSV",
             data=csv_buffer,
             file_name='extracted_data.csv',
             mime='text/csv',
         )
-        
+
         # Display failed URLs if any
         if st.session_state.failed_urls:
             st.subheader("❗ Failed URLs")
