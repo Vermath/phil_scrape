@@ -104,24 +104,9 @@ def configure_selenium():
     }
     chrome_options.add_experimental_option("prefs", prefs)
     
-    # Additional stealth options can be added here if needed
-    
     chrome_options.binary_location = shutil.which("chromium")  # Automatically find the chromium binary
     
     return chrome_options
-
-# Function to define LLM Extraction Strategy with refined instructions
-def get_llm_extraction_strategy(api_key):
-    return LLMExtractionStrategy(
-        provider="openai/gpt-4o-mini",  # Ensure this model is available and supported
-        api_token=api_key,  # Use the OpenAI API key from secrets
-        instruction=(
-            "Please extract only the main article content from the following webpage. "
-            "Exclude any navigation menus, headers, footers, advertisements, or any non-essential elements. "
-            "Provide a clear and concise summary of the main content without including any HTML or markup."
-        )
-        # Optionally, you can add a schema or other parameters as needed
-    )
 
 # Streamlit App
 def main():
@@ -225,7 +210,16 @@ def main():
         }
 
         # Define the LLM Extraction Strategy
-        llm_extraction_strategy = get_llm_extraction_strategy(st.secrets["openai_api_key"])
+        llm_extraction_strategy = LLMExtractionStrategy(
+            provider="openai/gpt-4o-mini",  # Ensure this model is available and supported
+            api_token=st.secrets["openai_api_key"],  # Use the OpenAI API key from secrets
+            instruction=(
+                "Please extract only the main article content from the following webpage. "
+                "Exclude any navigation menus, headers, footers, advertisements, or any non-essential elements. "
+                "Provide a clear and concise summary of the main content in markdown format without including any HTML or markup."
+            )
+            # Optionally, you can add a schema or other parameters as needed
+        )
 
         # Initialize progress bar
         progress_bar = st.progress(0)
@@ -274,16 +268,12 @@ def main():
         # Create DataFrame
         df_output = pd.DataFrame(data)
 
-        # Display the updated DataFrame with expandable markdown content
+        # Display the updated DataFrame with markdown formatting
         st.subheader("📊 Extracted Data")
-
-        # Function to display markdown content in an expandable section
-        def display_markdown_table(df):
-            for index, row in df.iterrows():
-                with st.expander(f"URL: {row['URL']}"):
-                    st.markdown(row['Extracted Content'])
-
-        display_markdown_table(df_output)
+        for index, row in df_output.iterrows():
+            st.markdown(f"**URL:** [{row['URL']}]({row['URL']})")
+            st.markdown(row['Extracted Content'])
+            st.markdown("---")
 
         # Prepare JSONL for download
         jsonl_lines = df_output.to_json(orient='records', lines=True)
