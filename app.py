@@ -5,6 +5,7 @@ import unicodedata
 import streamlit as st
 from crawl4ai import WebCrawler
 from crawl4ai.crawler_strategy import LocalSeleniumCrawlerStrategy
+from crawl4ai.extraction_strategy import LLMExtractionStrategy
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -84,7 +85,7 @@ def is_valid_url(url):
 
 # Streamlit App
 def main():
-    st.title("🔗 URL Processor and Content Scraper")
+    st.title("🔗 URL Processor and Content Extractor with LLM")
 
     # Verify Chromium and Chromedriver installation
     chromium_ok = verify_chromium()
@@ -186,8 +187,19 @@ def main():
         # Initialize lists for DataFrame
         data = {
             'URL': [],
-            'Scraped Content': []
+            'Extracted Content': []
         }
+
+        # Define the LLM Extraction Strategy
+        llm_extraction_strategy = LLMExtractionStrategy(
+            provider="openai/gpt-4o-mini",  # Ensure this model is available and supported
+            api_token=st.secrets["openai_api_key"],  # Use the OpenAI API key from secrets
+            instruction=(
+                "Extract the main content from the following webpage. "
+                "Summarize the content in a clear and concise manner."
+            )
+            # Optionally, you can add a schema or other parameters as needed
+        )
 
         # Initialize progress bar
         progress_bar = st.progress(0)
@@ -197,29 +209,33 @@ def main():
         for idx, url in enumerate(urls):
             status_text.text(f"🔄 Processing URL {idx + 1} of {len(urls)}")
             try:
-                # Scrape the webpage
-                scrape_result = crawler.run(url=url, bypass_cache=True)
+                # Scrape the webpage with LLM Extraction Strategy
+                scrape_result = crawler.run(
+                    url=url,
+                    extraction_strategy=llm_extraction_strategy,
+                    bypass_cache=True
+                )
 
                 if scrape_result.success:
-                    content = scrape_result.extracted_content
-                    if not content:
-                        st.warning(f"⚠️ Scraped content is empty for URL: {url}")
-                        scraped_content = "n/a"
+                    extracted_content = scrape_result.extracted_content
+                    if not extracted_content:
+                        st.warning(f"⚠️ Extracted content is empty for URL: {url}")
+                        extracted_content = "n/a"
                     else:
-                        scraped_content = clean_text(content)
+                        extracted_content = clean_text(extracted_content)
                 else:
-                    st.warning(f"⚠️ Failed to scrape the URL: {url}")
-                    scraped_content = "n/a"
+                    st.warning(f"⚠️ Failed to extract content from the URL: {url}")
+                    extracted_content = "n/a"
                     st.session_state.failed_urls.append(url)
 
                 # Append data
                 data['URL'].append(url)
-                data['Scraped Content'].append(scraped_content if scraped_content else "n/a")
+                data['Extracted Content'].append(extracted_content if extracted_content else "n/a")
 
             except Exception as e:
                 st.warning(f"⚠️ An error occurred while processing URL {url}: {e}")
                 data['URL'].append(url)
-                data['Scraped Content'].append("n/a")
+                data['Extracted Content'].append("n/a")
                 st.session_state.failed_urls.append(url)
 
             # Update progress bar
@@ -230,7 +246,7 @@ def main():
         df_output = pd.DataFrame(data)
 
         # Display the updated DataFrame
-        st.subheader("📊 Processed Data")
+        st.subheader("📊 Extracted Data")
         st.dataframe(df_output)
 
         # Prepare JSONL for download
@@ -241,7 +257,7 @@ def main():
         st.download_button(
             label="📥 Download data as JSONL",
             data=jsonl_buffer,
-            file_name='scraped_data.jsonl',
+            file_name='extracted_data.jsonl',
             mime='application/json',
         )
 
@@ -253,7 +269,7 @@ def main():
         st.download_button(
             label="📥 Download data as CSV",
             data=csv_buffer,
-            file_name='scraped_data.csv',
+            file_name='extracted_data.csv',
             mime='text/csv',
         )
 
