@@ -69,33 +69,6 @@ def clean_text(text):
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
-# Function to extract main article text using OpenAI
-def extract_main_article(scraped_content):
-    prompt = (
-        "Extract the main article text from the following content, excluding comments, advertisements, and any non-essential sections. "
-        "Ensure that the extracted text is coherent and complete. DO NOT TRUNCATE IN ANY WAY THE CONTENT OF THE MAIN ARTICLE. INCLUDE EVERYTHING WRITTEN BY THE AUTHOR IN THE ARTICLE WITH NO OMISSIONS. DO NOT SHORTEN IT IN ANY WAY."
-    )
-    full_prompt = f"{prompt}\n\nContent:\n{scraped_content}"
-    try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",  # Ensure the model supports the required token limit
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": full_prompt}
-            ],
-            max_tokens=16000,  # Set to 16000 tokens to accommodate entire article
-            n=1,
-            stop=None,
-            temperature=0.3,
-        )
-        extracted_data = response.choices[0].message.content.strip()
-        cleaned_data = clean_text(extracted_data)
-        return cleaned_data if cleaned_data else "n/a"
-    except Exception as e:
-        st.warning(f"⚠️ Error during OpenAI API call for extracting main article: {e}")
-        logger.error(f"OpenAI API Error for extracting main article: {e}")
-        return "n/a"
-
 # Function to parse pasted URLs
 def parse_pasted_urls(urls_text):
     urls = re.split(r'[,\n\s]+', urls_text)
@@ -111,7 +84,7 @@ def is_valid_url(url):
 
 # Streamlit App
 def main():
-    st.title("🔗 URL Processor and Content Scraper with OpenAI Extraction")
+    st.title("🔗 URL Processor and Content Scraper")
 
     # Verify Chromium and Chromedriver installation
     chromium_ok = verify_chromium()
@@ -213,7 +186,7 @@ def main():
         # Initialize lists for DataFrame
         data = {
             'URL': [],
-            'Extracted Content': []
+            'Scraped Content': []
         }
 
         # Initialize progress bar
@@ -234,21 +207,19 @@ def main():
                         scraped_content = "n/a"
                     else:
                         scraped_content = clean_text(content)
-                        # Extract main article text using OpenAI
-                        extracted_content = extract_main_article(scraped_content)
                 else:
                     st.warning(f"⚠️ Failed to scrape the URL: {url}")
-                    extracted_content = "n/a"
+                    scraped_content = "n/a"
                     st.session_state.failed_urls.append(url)
 
                 # Append data
                 data['URL'].append(url)
-                data['Extracted Content'].append(extracted_content if extracted_content else "n/a")
+                data['Scraped Content'].append(scraped_content if scraped_content else "n/a")
 
             except Exception as e:
                 st.warning(f"⚠️ An error occurred while processing URL {url}: {e}")
                 data['URL'].append(url)
-                data['Extracted Content'].append("n/a")
+                data['Scraped Content'].append("n/a")
                 st.session_state.failed_urls.append(url)
 
             # Update progress bar
@@ -262,20 +233,8 @@ def main():
         st.subheader("📊 Processed Data")
         st.dataframe(df_output)
 
-        # Display Extracted Content in Markdown
-        st.subheader("📝 Extracted Content")
-        for index, row in df_output.iterrows():
-            url = row['URL']
-            content = row['Extracted Content']
-            with st.expander(f"📄 {url}"):
-                if content != "n/a":
-                    st.markdown(content)
-                else:
-                    st.write("Content not available.")
-
         # Prepare JSONL for download
-        jsonl_records = df_output.to_dict(orient='records')
-        jsonl_lines = "\n".join([json.dumps(record) for record in jsonl_records])
+        jsonl_lines = df_output.to_json(orient='records', lines=True)
         jsonl_bytes = jsonl_lines.encode('utf-8')
         jsonl_buffer = BytesIO(jsonl_bytes)
 
