@@ -22,9 +22,6 @@ import time
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize OpenAI Client (if crawl4ai uses it internally)
-# Assuming crawl4ai manages its own OpenAI client internally, we might not need to instantiate it here.
-
 # Function to verify Chromium installation
 def verify_chromium():
     st.subheader("🔍 Chromium Installation Verification")
@@ -112,6 +109,19 @@ def configure_selenium():
     chrome_options.binary_location = shutil.which("chromium")  # Automatically find the chromium binary
     
     return chrome_options
+
+# Function to define LLM Extraction Strategy with refined instructions
+def get_llm_extraction_strategy(api_key):
+    return LLMExtractionStrategy(
+        provider="openai/gpt-4o-mini",  # Ensure this model is available and supported
+        api_token=api_key,  # Use the OpenAI API key from secrets
+        instruction=(
+            "Please extract only the main article content from the following webpage. "
+            "Exclude any navigation menus, headers, footers, advertisements, or any non-essential elements. "
+            "Provide a clear and concise summary of the main content without including any HTML or markup."
+        )
+        # Optionally, you can add a schema or other parameters as needed
+    )
 
 # Streamlit App
 def main():
@@ -215,16 +225,7 @@ def main():
         }
 
         # Define the LLM Extraction Strategy
-        llm_extraction_strategy = LLMExtractionStrategy(
-            provider="openai/gpt-4o-mini",  # Ensure this model is available and supported
-            api_token=st.secrets["openai_api_key"],  # Use the OpenAI API key from secrets
-            instruction=(
-                "Please extract only the main article content from the following webpage. "
-                "Exclude any navigation menus, headers, footers, advertisements, or any non-essential elements. "
-                "Provide a clear and concise summary of the main content without including any HTML or markup."
-            )
-            # Optionally, you can add a schema or other parameters as needed
-        )
+        llm_extraction_strategy = get_llm_extraction_strategy(st.secrets["openai_api_key"])
 
         # Initialize progress bar
         progress_bar = st.progress(0)
@@ -273,9 +274,16 @@ def main():
         # Create DataFrame
         df_output = pd.DataFrame(data)
 
-        # Display the updated DataFrame
+        # Display the updated DataFrame with expandable markdown content
         st.subheader("📊 Extracted Data")
-        st.dataframe(df_output)
+
+        # Function to display markdown content in an expandable section
+        def display_markdown_table(df):
+            for index, row in df.iterrows():
+                with st.expander(f"URL: {row['URL']}"):
+                    st.markdown(row['Extracted Content'])
+
+        display_markdown_table(df_output)
 
         # Prepare JSONL for download
         jsonl_lines = df_output.to_json(orient='records', lines=True)
