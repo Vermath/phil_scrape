@@ -3,16 +3,10 @@ import pandas as pd
 import re
 import unicodedata
 import streamlit as st
-from crawl4ai import WebCrawler
-from crawl4ai.crawler_strategy import LocalSeleniumCrawlerStrategy
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from openai import OpenAI
+import requests
 from io import BytesIO
 from urllib.parse import urlparse
 import logging
-import subprocess
 import shutil
 import json
 
@@ -20,44 +14,7 @@ import json
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize OpenAI Client
-openai_client = OpenAI(
-    api_key=st.secrets["openai_api_key"],  # Ensure this is correctly set in secrets.toml
-)
-
-# Function to verify Chromium installation
-def verify_chromium():
-    st.subheader("🔍 Chromium Installation Verification")
-    try:
-        result = subprocess.run(['chromium', '--version'], capture_output=True, text=True, check=True)
-        version = result.stdout.strip()
-        st.code(version)
-        return True
-    except subprocess.CalledProcessError as e:
-        st.error(f"🔴 Chromium not found or error occurred: {e}")
-        return False
-    except FileNotFoundError:
-        st.error("🔴 Chromium binary not found.")
-        return False
-
-# Function to verify Chromedriver installation
-def verify_chromedriver():
-    st.subheader("🔍 Chromedriver Installation Verification")
-    chromedriver_path = shutil.which("chromedriver")
-    if chromedriver_path:
-        try:
-            result = subprocess.run(['chromedriver', '--version'], capture_output=True, text=True, check=True)
-            version = result.stdout.strip()
-            st.code(version)
-            return True
-        except subprocess.CalledProcessError as e:
-            st.error(f"🔴 Chromedriver error: {e}")
-            return False
-    else:
-        st.error("🔴 Chromedriver binary not found.")
-        return False
-
-# Utility function to clean text
+# Function to clean text
 def clean_text(text):
     if not isinstance(text, str):
         return text
@@ -82,43 +39,27 @@ def is_valid_url(url):
     except:
         return False
 
+# Function to fetch content using Jina Reader API
+def fetch_content_jina(url, headers=None):
+    # Directly append the raw URL without encoding
+    jina_read_url = f"https://r.jina.ai/{url}"
+    
+    try:
+        response = requests.get(jina_read_url, headers=headers, timeout=30)
+        response.raise_for_status()
+        # Assuming the response is in text format
+        return response.text if response.text else "n/a"
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error occurred for {url}: {http_err}")
+        logger.error(f"Response Content: {http_err.response.text}")
+        return "n/a"
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error fetching {url}: {e}")
+        return "n/a"
+
 # Streamlit App
 def main():
-    st.title("🔗 URL Processor and Content Scraper")
-
-    # Verify Chromium and Chromedriver installation
-    chromium_ok = verify_chromium()
-    chromedriver_ok = verify_chromedriver()
-    if not (chromium_ok and chromedriver_ok):
-        st.error("🔴 Chromium or Chromedriver is not installed correctly. Please check your setup.")
-        st.stop()
-
-    # Configure Selenium to run Chromium in headless mode
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.binary_location = shutil.which("chromium")  # Automatically find the chromium binary
-
-    # Locate system-installed Chromedriver
-    chromedriver_path = shutil.which("chromedriver")
-    if not chromedriver_path:
-        st.error("🔴 Chromedriver not found in system PATH.")
-        st.stop()
-
-    # Initialize WebDriver
-    try:
-        service = Service(chromedriver_path)
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        crawler_strategy = LocalSeleniumCrawlerStrategy(driver=driver)
-        crawler = WebCrawler(verbose=False, crawler_strategy=crawler_strategy)
-        crawler.warmup()
-        st.success("🟢 Selenium WebDriver initialized successfully.")
-    except Exception as e:
-        st.error(f"🔴 Selenium initialization error: {e}")
-        st.stop()
+    st.title("🔗 URL Processor and Content Scraper using Jina AI Reader API")
 
     # Initialize session state for failed URLs
     if 'failed_urls' not in st.session_state:
@@ -128,7 +69,7 @@ def main():
     uploaded_file = st.file_uploader("📁 Upload CSV with 'URL' column", type=["csv"])
 
     # Manual entry
-    st.subheader("🖊️ Or Enter URLs Manually")
+    st.subheader("🖊️ Or Enter a Single URL")
     manual_url = st.text_input("Enter a single URL")
 
     # Paste list of URLs
@@ -193,28 +134,26 @@ def main():
         progress_bar = st.progress(0)
         status_text = st.empty()
 
+        # Optional: Include API key in headers if using a private Jina Reader API instance
+        headers = {}
+        # Uncomment and modify the following lines if using a private instance with an API key
+        # reader_api_key = st.secrets["reader_api"]
+        # headers["Authorization"] = f"Bearer {reader_api_key}"
+
         # Process each URL
         for idx, url in enumerate(urls):
             status_text.text(f"🔄 Processing URL {idx + 1} of {len(urls)}")
             try:
-                # Scrape the webpage
-                scrape_result = crawler.run(url=url, bypass_cache=True)
+                # Fetch content using Jina Reader API
+                scraped_content = fetch_content_jina(url, headers=headers)
 
-                if scrape_result.success:
-                    content = scrape_result.extracted_content
-                    if not content:
-                        st.warning(f"⚠️ Scraped content is empty for URL: {url}")
-                        scraped_content = "n/a"
-                    else:
-                        scraped_content = clean_text(content)
-                else:
-                    st.warning(f"⚠️ Failed to scrape the URL: {url}")
-                    scraped_content = "n/a"
+                if scraped_content == "n/a":
+                    st.warning(f"⚠️ Failed to fetch content for URL: {url}")
                     st.session_state.failed_urls.append(url)
 
                 # Append data
                 data['URL'].append(url)
-                data['Scraped Content'].append(scraped_content if scraped_content else "n/a")
+                data['Scraped Content'].append(scraped_content)
 
             except Exception as e:
                 st.warning(f"⚠️ An error occurred while processing URL {url}: {e}")
